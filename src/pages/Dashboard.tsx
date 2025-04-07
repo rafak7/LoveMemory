@@ -433,7 +433,7 @@ const Dashboard = () => {
                 <div className="md:w-1/3">
                   <div id="qr-code-preview" className="bg-white p-4 rounded-xl mb-6">
                     <QRCodeSVG
-                      value={`${window.location.origin}/memory/${selectedMemoryForQR.id}`}
+                      value={`https://love-memory-one.vercel.app/memory/${selectedMemoryForQR.id}`}
                       size={200}
                       level="H"
                       className="w-full h-auto"
