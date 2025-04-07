@@ -2,12 +2,28 @@ import React, { useState } from 'react';
 import { Heart, Plus, Music, Image, MessageCircleHeart, QrCode, Trash2, X, Download, Eye, ExternalLink } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 
+interface SpotifyTrack {
+  name: string;
+  album: {
+    name: string;
+    images: Array<{
+      url: string;
+      height: number;
+      width: number;
+    }>;
+  };
+  artists: Array<{
+    name: string;
+  }>;
+}
+
 interface Memory {
   id: string;
   title: string;
   message: string;
   photos: File[];
   musicUrl?: string;
+  musicData?: SpotifyTrack;
   createdAt: Date;
 }
 
@@ -19,6 +35,109 @@ const Dashboard = () => {
   const [selectedMemoryForQR, setSelectedMemoryForQR] = useState<Memory | null>(null);
   const [showPreview, setShowPreview] = useState(true);
   const [currentPhotoIndex, setCurrentPhotoIndex] = useState(0);
+  const [isLoadingMusic, setIsLoadingMusic] = useState(false);
+
+  const CLIENT_ID = 'dd0ba542bcbf48d4ae60fd5149ac090e';
+  const CLIENT_SECRET = '6f15f6bcbdb140e4887b77e77bb513ba';
+
+  const getSpotifyToken = async () => {
+    try {
+      console.log('Solicitando token do Spotify...');
+      const tokenResponse = await fetch('https://accounts.spotify.com/api/token', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: new URLSearchParams({
+          grant_type: 'client_credentials',
+          client_id: CLIENT_ID,
+          client_secret: CLIENT_SECRET,
+        }).toString(),
+      });
+      
+      if (!tokenResponse.ok) {
+        throw new Error('Falha ao obter token do Spotify');
+      }
+
+      const data = await tokenResponse.json();
+      return data.access_token;
+    } catch (error) {
+      console.error('Erro ao obter token:', error);
+      return null;
+    }
+  };
+
+  const getTrackId = (url: string) => {
+    console.log('Extraindo ID da URL:', url);
+    
+    try {
+      // Tenta extrair o ID usando URL e pathname
+      const urlObj = new URL(url);
+      const pathParts = urlObj.pathname.split('/');
+      const trackId = pathParts[pathParts.indexOf('track') + 1];
+      
+      if (trackId) {
+        console.log('ID encontrado via URL parsing:', trackId);
+        return trackId;
+      }
+
+      // Se não encontrou via URL, tenta via regex
+      const trackMatch = url.match(/spotify\.com\/track\/([a-zA-Z0-9]+)/);
+      if (trackMatch) {
+        console.log('ID encontrado via regex:', trackMatch[1]);
+        return trackMatch[1];
+      }
+
+      console.error('Nenhum ID encontrado na URL');
+      return null;
+    } catch (error) {
+      console.error('Erro ao extrair ID da URL:', error);
+      return null;
+    }
+  };
+
+  const fetchSpotifyTrackData = async (url: string): Promise<SpotifyTrack | null> => {
+    setIsLoadingMusic(true);
+    try {
+      console.log('Iniciando busca de dados para URL:', url);
+      
+      const trackId = getTrackId(url);
+      if (!trackId) {
+        console.error('ID da música não encontrado na URL:', url);
+        return null;
+      }
+
+      console.log('Obtendo token do Spotify...');
+      const token = await getSpotifyToken();
+      if (!token) {
+        console.error('Não foi possível obter o token do Spotify');
+        return null;
+      }
+      console.log('Token obtido com sucesso');
+
+      console.log('Fazendo requisição para a API do Spotify...');
+      const response = await fetch(`https://api.spotify.com/v1/tracks/${trackId}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('Erro na resposta da API:', response.status, errorText);
+        throw new Error(`Falha ao buscar dados da música: ${response.status}`);
+      }
+
+      const data = await response.json();
+      console.log('Dados recebidos da API:', data);
+      return data;
+    } catch (error) {
+      console.error('Erro ao buscar dados:', error);
+      return null;
+    } finally {
+      setIsLoadingMusic(false);
+    }
+  };
 
   const handlePhotoSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
@@ -26,23 +145,57 @@ const Dashboard = () => {
     }
   };
 
-  const handleCreateMemory = (e: React.FormEvent) => {
+  const handleCreateMemory = async (e: React.FormEvent) => {
     e.preventDefault();
+    let musicData = null;
+    if (newMemory.musicUrl) {
+      console.log('Criando memória com música. URL:', newMemory.musicUrl);
+      try {
+        musicData = await fetchSpotifyTrackData(newMemory.musicUrl);
+        if (!musicData) {
+          console.error('Não foi possível obter dados da música');
+        } else {
+          console.log('Dados da música obtidos com sucesso:', musicData);
+        }
+      } catch (error) {
+        console.error('Erro ao buscar dados da música:', error);
+      }
+    }
+
     const memory: Memory = {
       id: Date.now().toString(),
       title: newMemory.title || '',
       message: newMemory.message || '',
       photos: selectedPhotos,
       musicUrl: newMemory.musicUrl,
+      musicData: musicData || undefined,
       createdAt: new Date()
     };
+
+    console.log('Memória criada:', memory);
     setMemories([memory, ...memories]);
     setIsCreating(false);
     setNewMemory({});
     setSelectedPhotos([]);
   };
 
-  const handleGenerateQR = (memory: Memory) => {
+  const handleGenerateQR = async (memory: Memory) => {
+    console.log('Gerando QR Code para memória:', memory);
+    if (memory.musicUrl && !memory.musicData) {
+      console.log('Buscando dados da música para QR Code. URL:', memory.musicUrl);
+      try {
+        const musicData = await fetchSpotifyTrackData(memory.musicUrl);
+        if (musicData) {
+          console.log('Dados obtidos com sucesso:', musicData);
+          memory = { ...memory, musicData };
+          setMemories(memories.map(m => m.id === memory.id ? memory : m));
+        } else {
+          console.error('Não foi possível obter dados da música');
+        }
+      } catch (error) {
+        console.error('Erro ao buscar dados da música:', error);
+      }
+    }
     setSelectedMemoryForQR(memory);
     setShowPreview(true);
     setCurrentPhotoIndex(0);
@@ -86,24 +239,6 @@ const Dashboard = () => {
     }
     
     return null;
-  };
-
-  // Função para extrair o título da música da URL do Spotify
-  const getSpotifyTitle = (url: string) => {
-    if (!url) return '';
-    
-    try {
-      const urlObj = new URL(url);
-      const pathParts = urlObj.pathname.split('/');
-      // Remove caracteres especiais e substitui hífens por espaços
-      const title = pathParts[pathParts.length - 1].replace(/-/g, ' ');
-      // Capitaliza a primeira letra de cada palavra
-      return title.split(' ').map(word => 
-        word.charAt(0).toUpperCase() + word.slice(1)
-      ).join(' ');
-    } catch {
-      return 'Música do Spotify';
-    }
   };
 
   return (
@@ -367,11 +502,32 @@ const Dashboard = () => {
 
                     {selectedMemoryForQR.musicUrl && (
                       <div className="bg-purple-900/30 rounded-xl p-4 space-y-4">
-                        <div className="flex items-center gap-3">
-                          <Music className="h-5 w-5 text-purple-400" />
-                          <h5 className="text-lg font-semibold text-white flex-1">
-                            {getSpotifyTitle(selectedMemoryForQR.musicUrl)}
-                          </h5>
+                        <div className="flex items-center gap-4">
+                          {isLoadingMusic ? (
+                            <div className="w-16 h-16 rounded-lg bg-purple-900/50 animate-pulse" />
+                          ) : selectedMemoryForQR.musicData?.album.images[0] ? (
+                            <img 
+                              src={selectedMemoryForQR.musicData.album.images[0].url}
+                              alt="Capa do álbum"
+                              className="w-16 h-16 rounded-lg object-cover"
+                            />
+                          ) : (
+                            <div className="w-16 h-16 rounded-lg bg-purple-900/50 flex items-center justify-center">
+                              <Music className="h-8 w-8 text-purple-400" />
+                            </div>
+                          )}
+                          <div className="flex-1">
+                            <h5 className="text-lg font-semibold text-white">
+                              {isLoadingMusic ? (
+                                <div className="h-6 w-32 bg-purple-900/50 rounded animate-pulse" />
+                              ) : selectedMemoryForQR.musicData?.name || 'Música não encontrada'}
+                            </h5>
+                            <p className="text-sm text-gray-400">
+                              {isLoadingMusic ? (
+                                <div className="h-4 w-24 bg-purple-900/50 rounded animate-pulse mt-2" />
+                              ) : selectedMemoryForQR.musicData?.artists.map(artist => artist.name).join(', ') || 'Artista desconhecido'}
+                            </p>
+                          </div>
                           <a
                             href={selectedMemoryForQR.musicUrl}
                             target="_blank"
