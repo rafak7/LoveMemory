@@ -31,30 +31,42 @@ interface Memory {
   createdAt: Date;
 }
 
+// Função para buscar a memória da API
+const fetchMemory = async (id: string): Promise<Memory | null> => {
+  try {
+    const response = await fetch(`/api/memories/${id}`);
+    if (!response.ok) {
+      throw new Error('Memória não encontrada');
+    }
+    const data = await response.json();
+    return {
+      ...data,
+      createdAt: new Date(data.createdAt)
+    };
+  } catch (error) {
+    console.error('Erro ao buscar memória:', error);
+    return null;
+  }
+};
+
 const MemoryPage = () => {
   const router = useRouter();
   const { id } = router.query;
   const [memory, setMemory] = useState<Memory | null>(null);
   const [currentPhotoIndex, setCurrentPhotoIndex] = useState(0);
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    if (id) {
-      const savedMemories = localStorage.getItem('memories');
-      if (savedMemories) {
-        try {
-          const memories = JSON.parse(savedMemories);
-          const foundMemory = memories.find((m: Memory) => m.id === id);
-          if (foundMemory) {
-            setMemory({
-              ...foundMemory,
-              createdAt: new Date(foundMemory.createdAt)
-            });
-          }
-        } catch (error) {
-          console.error('Erro ao carregar memória:', error);
-        }
+    async function loadMemory() {
+      if (typeof id === 'string') {
+        setIsLoading(true);
+        const data = await fetchMemory(id);
+        setMemory(data);
+        setIsLoading(false);
       }
     }
+
+    loadMemory();
   }, [id]);
 
   const getSpotifyEmbedUrl = (url: string) => {
@@ -65,6 +77,17 @@ const MemoryPage = () => {
     }
     return null;
   };
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-gray-900 via-purple-900 to-gray-900 text-white flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-16 h-16 border-4 border-purple-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-gray-400">Carregando memória...</p>
+        </div>
+      </div>
+    );
+  }
 
   if (!memory) {
     return (

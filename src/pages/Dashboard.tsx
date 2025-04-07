@@ -254,11 +254,43 @@ const Dashboard = () => {
       createdAt: new Date()
     };
 
-    console.log('Memória criada:', memory);
-    setMemories([memory, ...memories]);
-    setIsCreating(false);
-    setNewMemory({});
-    setSelectedPhotos([]);
+    try {
+      // Converte as fotos para dataURL antes de salvar
+      const photosWithDataURL = await Promise.all(
+        selectedPhotos.map(async (photo) => ({
+          name: photo.name,
+          type: photo.type,
+          dataUrl: await fileToDataURL(photo)
+        }))
+      );
+
+      const memoryToSave = {
+        ...memory,
+        photos: photosWithDataURL
+      };
+
+      // Salva a memória na API
+      const response = await fetch(`/api/memories/${memory.id}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(memoryToSave),
+      });
+
+      if (!response.ok) {
+        throw new Error('Falha ao salvar memória');
+      }
+
+      console.log('Memória salva com sucesso:', memory);
+      setMemories([memory, ...memories]);
+      setIsCreating(false);
+      setNewMemory({});
+      setSelectedPhotos([]);
+    } catch (error) {
+      console.error('Erro ao salvar memória:', error);
+      alert('Erro ao salvar memória. Por favor, tente novamente.');
+    }
   };
 
   const handleGenerateQR = async (memory: Memory) => {
