@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Heart, Plus, Music, Image, MessageCircleHeart, QrCode, Trash2, X, Download, Eye, ExternalLink } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 
@@ -17,6 +17,12 @@ interface SpotifyTrack {
   }>;
 }
 
+interface StoredPhoto {
+  name: string;
+  type: string;
+  dataUrl: string;
+}
+
 interface Memory {
   id: string;
   title: string;
@@ -25,6 +31,10 @@ interface Memory {
   musicUrl?: string;
   musicData?: SpotifyTrack;
   createdAt: Date;
+}
+
+interface StoredMemory extends Omit<Memory, 'photos'> {
+  photos: StoredPhoto[];
 }
 
 const Dashboard = () => {
@@ -39,6 +49,78 @@ const Dashboard = () => {
 
   const CLIENT_ID = 'dd0ba542bcbf48d4ae60fd5149ac090e';
   const CLIENT_SECRET = '6f15f6bcbdb140e4887b77e77bb513ba';
+
+  // Carrega as memórias do localStorage quando o componente monta
+  useEffect(() => {
+    const savedMemories = localStorage.getItem('memories');
+    if (savedMemories) {
+      try {
+        const parsedMemories = JSON.parse(savedMemories) as StoredMemory[];
+        // Converte as datas de string para Date
+        const memoriesWithDates = parsedMemories.map(memory => ({
+          ...memory,
+          createdAt: new Date(memory.createdAt),
+          // Converte os objetos StoredPhoto em File
+          photos: memory.photos.map(photo => {
+            const blob = dataURLtoBlob(photo.dataUrl);
+            return new File([blob], photo.name, { type: photo.type });
+          })
+        }));
+        setMemories(memoriesWithDates);
+      } catch (error) {
+        console.error('Erro ao carregar memórias:', error);
+      }
+    }
+  }, []);
+
+  // Salva as memórias no localStorage sempre que elas mudarem
+  useEffect(() => {
+    const saveMemories = async () => {
+      try {
+        // Converte os objetos File em StoredPhoto antes de salvar
+        const memoriesForStorage: StoredMemory[] = await Promise.all(
+          memories.map(async memory => ({
+            ...memory,
+            photos: await Promise.all(
+              memory.photos.map(async photo => ({
+                name: photo.name,
+                type: photo.type,
+                dataUrl: await fileToDataURL(photo)
+              }))
+            )
+          }))
+        );
+        localStorage.setItem('memories', JSON.stringify(memoriesForStorage));
+      } catch (error) {
+        console.error('Erro ao salvar memórias:', error);
+      }
+    };
+
+    saveMemories();
+  }, [memories]);
+
+  // Função auxiliar para converter File em dataURL
+  const fileToDataURL = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  };
+
+  // Função auxiliar para converter dataURL em Blob
+  const dataURLtoBlob = (dataURL: string): Blob => {
+    const arr = dataURL.split(',');
+    const mime = arr[0].match(/:(.*?);/)?.[1];
+    const bstr = atob(arr[1]);
+    let n = bstr.length;
+    const u8arr = new Uint8Array(n);
+    while (n--) {
+      u8arr[n] = bstr.charCodeAt(n);
+    }
+    return new Blob([u8arr], { type: mime });
+  };
 
   const getSpotifyToken = async () => {
     try {
