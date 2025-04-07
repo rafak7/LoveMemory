@@ -1,0 +1,70 @@
+@import 'variables';
+@import 'mixins';
+
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600&family=Crimson+Pro:wght@400;500;600;700&display=swap');
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: $font-primary;
+  background-color: $background-dark;
+  color: $text-light;
+  line-height: 1.6;
+  letter-spacing: 0.2px;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: $font-secondary;
+  color: $white;
+  letter-spacing: -0.5px;
+}
+
+.container {
+  @include container;
+}
+
+.btn {
+  padding: $spacing-sm $spacing-lg;
+  border-radius: 25px;
+  font-weight: 500;
+  transition: $transition-base;
+  cursor: pointer;
+  
+  &-primary {
+    background: linear-gradient(to right, $primary, $secondary);
+    color: $white;
+    border: none;
+    
+    &:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 10px 20px rgba($primary, 0.2);
+    }
+  }
+  
+  &-secondary {
+    background-color: transparent;
+    color: $primary;
+    border: 2px solid $primary;
+    
+    &:hover {
+      background: linear-gradient(to right, $primary, $secondary);
+      color: $white;
+      border-color: transparent;
+    }
+  }
+}
+
+.page-transition {
+  @include fadeIn;
+}
+
+.gradient-text {
+  background: linear-gradient(to right, $primary, $secondary);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
