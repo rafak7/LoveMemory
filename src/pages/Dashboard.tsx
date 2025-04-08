@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { Heart, Plus, Music, Image, MessageCircleHeart, QrCode, Trash2, X, Download, Eye, ExternalLink } from 'lucide-react';
+import { Heart, Plus, Music, Image, MessageCircleHeart, QrCode, Trash2, X, Download, ExternalLink, Eye } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
+import { memoriesApi, Memory as FirebaseMemory } from '../config/firebase';
 
 interface SpotifyTrack {
   name: string;
+  artists: string[];
   album: {
     name: string;
     images: Array<{
@@ -12,35 +14,26 @@ interface SpotifyTrack {
       width: number;
     }>;
   };
-  artists: Array<{
-    name: string;
-  }>;
 }
 
-interface StoredPhoto {
-  name: string;
-  type: string;
-  dataUrl: string;
-}
-
-interface Memory {
-  id: string;
-  title: string;
-  message: string;
+interface Memory extends Omit<FirebaseMemory, 'photos'> {
   photos: File[];
+  photoUrls?: string[];
   musicUrl?: string;
   musicData?: SpotifyTrack;
-  createdAt: Date;
+  description: string;
 }
 
-interface StoredMemory extends Omit<Memory, 'photos'> {
-  photos: StoredPhoto[];
+interface NewMemory {
+  title?: string;
+  description?: string;
+  musicUrl?: string;
 }
 
 const Dashboard = () => {
   const [memories, setMemories] = useState<Memory[]>([]);
   const [isCreating, setIsCreating] = useState(false);
-  const [newMemory, setNewMemory] = useState<Partial<Memory>>({});
+  const [newMemory, setNewMemory] = useState<NewMemory>({});
   const [selectedPhotos, setSelectedPhotos] = useState<File[]>([]);
   const [selectedMemoryForQR, setSelectedMemoryForQR] = useState<Memory | null>(null);
   const [showPreview, setShowPreview] = useState(true);
@@ -50,81 +43,38 @@ const Dashboard = () => {
   const CLIENT_ID = 'dd0ba542bcbf48d4ae60fd5149ac090e';
   const CLIENT_SECRET = '6f15f6bcbdb140e4887b77e77bb513ba';
 
-  // Carrega as memórias do localStorage quando o componente monta
+  // Carregar memórias ao montar o componente
   useEffect(() => {
-    const savedMemories = localStorage.getItem('memories');
-    if (savedMemories) {
-      try {
-        const parsedMemories = JSON.parse(savedMemories) as StoredMemory[];
-        // Converte as datas de string para Date
-        const memoriesWithDates = parsedMemories.map(memory => ({
-          ...memory,
-          createdAt: new Date(memory.createdAt),
-          // Converte os objetos StoredPhoto em File
-          photos: memory.photos.map(photo => {
-            const blob = dataURLtoBlob(photo.dataUrl);
-            return new File([blob], photo.name, { type: photo.type });
-          })
-        }));
-        setMemories(memoriesWithDates);
-      } catch (error) {
-        console.error('Erro ao carregar memórias:', error);
-      }
-    }
+    loadMemories();
   }, []);
 
-  // Salva as memórias no localStorage sempre que elas mudarem
-  useEffect(() => {
-    const saveMemories = async () => {
-      try {
-        // Converte os objetos File em StoredPhoto antes de salvar
-        const memoriesForStorage: StoredMemory[] = await Promise.all(
-          memories.map(async memory => ({
-            ...memory,
-            photos: await Promise.all(
-              memory.photos.map(async photo => ({
-                name: photo.name,
-                type: photo.type,
-                dataUrl: await fileToDataURL(photo)
-              }))
-            )
-          }))
-        );
-        localStorage.setItem('memories', JSON.stringify(memoriesForStorage));
-      } catch (error) {
-        console.error('Erro ao salvar memórias:', error);
-      }
-    };
+  const loadMemories = async () => {
+    try {
+      const userId = "user123"; // TODO: Implementar autenticação
+      const firebaseMemories = await memoriesApi.getByUserId(userId);
+      console.log('Memórias carregadas do Firebase:', firebaseMemories);
+      
+      // Converter as memórias do Firebase para o formato local
+      const convertedMemories = firebaseMemories.map(memory => ({
+        ...memory,
+        photos: [], // Mantemos o array de File vazio
+        photoUrls: memory.photoUrls || [], // Usamos as URLs armazenadas
+      }));
 
-    saveMemories();
-  }, [memories]);
-
-  // Função auxiliar para converter File em dataURL
-  const fileToDataURL = (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result as string);
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
-    });
+      setMemories(convertedMemories);
+    } catch (error) {
+      console.error('Erro ao carregar memórias:', error);
+    }
   };
 
-  // Função auxiliar para converter dataURL em Blob
-  const dataURLtoBlob = (dataURL: string): Blob => {
-    const arr = dataURL.split(',');
-    const mime = arr[0].match(/:(.*?);/)?.[1];
-    const bstr = atob(arr[1]);
-    let n = bstr.length;
-    const u8arr = new Uint8Array(n);
-    while (n--) {
-      u8arr[n] = bstr.charCodeAt(n);
+  const handlePhotoSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) {
+      setSelectedPhotos(Array.from(e.target.files));
     }
-    return new Blob([u8arr], { type: mime });
   };
 
   const getSpotifyToken = async () => {
     try {
-      console.log('Solicitando token do Spotify...');
       const tokenResponse = await fetch('https://accounts.spotify.com/api/token', {
         method: 'POST',
         headers: {
@@ -136,7 +86,7 @@ const Dashboard = () => {
           client_secret: CLIENT_SECRET,
         }).toString(),
       });
-      
+
       if (!tokenResponse.ok) {
         throw new Error('Falha ao obter token do Spotify');
       }
@@ -150,39 +100,13 @@ const Dashboard = () => {
   };
 
   const getTrackId = (url: string) => {
-    console.log('Extraindo ID da URL:', url);
-    
-    try {
-      // Tenta extrair o ID usando URL e pathname
-      const urlObj = new URL(url);
-      const pathParts = urlObj.pathname.split('/');
-      const trackId = pathParts[pathParts.indexOf('track') + 1];
-      
-      if (trackId) {
-        console.log('ID encontrado via URL parsing:', trackId);
-        return trackId;
-      }
-
-      // Se não encontrou via URL, tenta via regex
-      const trackMatch = url.match(/spotify\.com\/track\/([a-zA-Z0-9]+)/);
-      if (trackMatch) {
-        console.log('ID encontrado via regex:', trackMatch[1]);
-        return trackMatch[1];
-      }
-
-      console.error('Nenhum ID encontrado na URL');
-      return null;
-    } catch (error) {
-      console.error('Erro ao extrair ID da URL:', error);
-      return null;
-    }
+    const trackMatch = url.match(/spotify\.com(?:\/intl-[a-z]+)?\/track\/([a-zA-Z0-9]+)/);
+    return trackMatch ? trackMatch[1] : null;
   };
 
   const fetchSpotifyTrackData = async (url: string): Promise<SpotifyTrack | null> => {
     setIsLoadingMusic(true);
     try {
-      console.log('Iniciando busca de dados para URL:', url);
-      
       const trackId = getTrackId(url);
       if (!trackId) {
         console.error('ID da música não encontrado na URL:', url);
@@ -212,104 +136,114 @@ const Dashboard = () => {
 
       const data = await response.json();
       console.log('Dados recebidos da API:', data);
-      return data;
+
+      return {
+        name: data.name,
+        artists: data.artists.map((artist: { name: string }) => artist.name),
+        album: {
+          name: data.album.name,
+          images: data.album.images,
+        },
+      };
     } catch (error) {
-      console.error('Erro ao buscar dados:', error);
+      console.error('Erro ao buscar dados da música:', error);
       return null;
     } finally {
       setIsLoadingMusic(false);
     }
   };
 
-  const handlePhotoSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files) {
-      setSelectedPhotos(Array.from(e.target.files));
-    }
-  };
-
   const handleCreateMemory = async (e: React.FormEvent) => {
     e.preventDefault();
-    let musicData = null;
-    if (newMemory.musicUrl) {
-      console.log('Criando memória com música. URL:', newMemory.musicUrl);
-      try {
-        musicData = await fetchSpotifyTrackData(newMemory.musicUrl);
-        if (!musicData) {
-          console.error('Não foi possível obter dados da música');
-        } else {
-          console.log('Dados da música obtidos com sucesso:', musicData);
-        }
-      } catch (error) {
-        console.error('Erro ao buscar dados da música:', error);
-      }
-    }
-
-    const memory: Memory = {
-      id: Date.now().toString(),
-      title: newMemory.title || '',
-      message: newMemory.message || '',
-      photos: selectedPhotos,
-      musicUrl: newMemory.musicUrl,
-      musicData: musicData || undefined,
-      createdAt: new Date()
-    };
-
+    
     try {
-      // Converte as fotos para dataURL antes de salvar
-      const photosWithDataURL = await Promise.all(
-        selectedPhotos.map(async (photo) => ({
-          name: photo.name,
-          type: photo.type,
-          dataUrl: await fileToDataURL(photo)
-        }))
-      );
+      const userId = "user123";
+      let musicData = null;
 
-      const memoryToSave = {
-        ...memory,
-        photos: photosWithDataURL
+      if (newMemory.musicUrl) {
+        console.log('Buscando dados da música:', newMemory.musicUrl);
+        musicData = await fetchSpotifyTrackData(newMemory.musicUrl);
+        console.log('Dados da música obtidos:', musicData);
+      }
+      
+      // Primeiro criar a memória para obter o ID
+      const newMemoryData = {
+        title: newMemory.title || '',
+        description: newMemory.description || '',
+        date: new Date().toISOString(),
+        userId,
+        createdAt: Date.now(),
+        musicUrl: newMemory.musicUrl || '',
+        ...(musicData ? { musicData } : {}),
       };
 
-      // Salva a memória na API
-      const response = await fetch(`/api/memories/${memory.id}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(memoryToSave),
-      });
+      console.log('Criando nova memória:', newMemoryData);
+      const createdMemory = await memoriesApi.create(newMemoryData);
+      
+      // Upload das fotos e obtenção das URLs
+      const photoUrls = await Promise.all(
+        selectedPhotos.map((file, index) => 
+          memoriesApi.uploadPhoto(file, createdMemory.id!, index)
+        )
+      );
 
-      if (!response.ok) {
-        throw new Error('Falha ao salvar memória');
-      }
+      // Atualizar a memória com as URLs das fotos
+      await memoriesApi.update(createdMemory.id!, { photoUrls });
 
-      console.log('Memória salva com sucesso:', memory);
-      setMemories([memory, ...memories]);
+      setMemories(prevMemories => [{
+        ...createdMemory,
+        photos: selectedPhotos,
+        photoUrls,
+        description: newMemoryData.description,
+        musicUrl: newMemoryData.musicUrl,
+        musicData: musicData || undefined,
+      } as Memory, ...prevMemories]);
+
       setIsCreating(false);
       setNewMemory({});
       setSelectedPhotos([]);
     } catch (error) {
-      console.error('Erro ao salvar memória:', error);
-      alert('Erro ao salvar memória. Por favor, tente novamente.');
+      console.error('Erro ao criar memória:', error);
+      alert('Erro ao criar memória. Por favor, tente novamente.');
+    }
+  };
+
+  const handleDeleteMemory = async (id: string) => {
+    try {
+      await memoriesApi.delete(id);
+      setMemories(prevMemories => prevMemories.filter(memory => memory.id !== id));
+    } catch (error) {
+      console.error('Erro ao deletar memória:', error);
+      alert('Erro ao deletar memória. Por favor, tente novamente.');
     }
   };
 
   const handleGenerateQR = async (memory: Memory) => {
     console.log('Gerando QR Code para memória:', memory);
+    
+    // Se tiver URL da música mas não tiver os dados, buscar
     if (memory.musicUrl && !memory.musicData) {
-      console.log('Buscando dados da música para QR Code. URL:', memory.musicUrl);
-      try {
-        const musicData = await fetchSpotifyTrackData(memory.musicUrl);
-        if (musicData) {
-          console.log('Dados obtidos com sucesso:', musicData);
-          memory = { ...memory, musicData };
-          setMemories(memories.map(m => m.id === memory.id ? memory : m));
-        } else {
-          console.error('Não foi possível obter dados da música');
+      console.log('Buscando dados da música para QR Code:', memory.musicUrl);
+      const musicData = await fetchSpotifyTrackData(memory.musicUrl);
+      if (musicData) {
+        console.log('Dados da música obtidos:', musicData);
+        memory = { ...memory, musicData };
+        
+        // Atualizar a memória no Firebase também
+        try {
+          await memoriesApi.update(memory.id!, { musicData });
+          console.log('Dados da música atualizados no Firebase');
+        } catch (error) {
+          console.error('Erro ao atualizar dados da música no Firebase:', error);
         }
-      } catch (error) {
-        console.error('Erro ao buscar dados da música:', error);
+        
+        // Atualizar a memória na lista local
+        setMemories(prevMemories => 
+          prevMemories.map(m => m.id === memory.id ? memory : m)
+        );
       }
     }
+    
     setSelectedMemoryForQR(memory);
     setShowPreview(true);
     setCurrentPhotoIndex(0);
@@ -337,8 +271,8 @@ const Dashboard = () => {
   };
 
   // Função para extrair o ID da música do Spotify
-  const getSpotifyEmbedUrl = (url: string) => {
-    if (!url) return null;
+  const getSpotifyEmbedUrl = (url: string | undefined) => {
+    if (!url) return undefined;
     
     // Para URLs de música do Spotify
     const trackMatch = url.match(/spotify\.com\/track\/([a-zA-Z0-9]+)/);
@@ -352,7 +286,7 @@ const Dashboard = () => {
       return `https://open.spotify.com/embed/playlist/${playlistMatch[1]}`;
     }
     
-    return null;
+    return undefined;
   };
 
   return (
@@ -395,17 +329,17 @@ const Dashboard = () => {
               </div>
 
               <div>
-                <label htmlFor="message" className="block text-sm font-medium text-gray-300 mb-2">
+                <label htmlFor="description" className="block text-sm font-medium text-gray-300 mb-2">
                   Mensagem Especial
                 </label>
                 <textarea
-                  id="message"
+                  id="description"
                   required
                   rows={4}
                   className="w-full px-4 py-2 bg-purple-900/30 border border-purple-500/20 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
                   placeholder="Escreva uma mensagem carinhosa..."
-                  value={newMemory.message || ''}
-                  onChange={(e) => setNewMemory({ ...newMemory, message: e.target.value })}
+                  value={newMemory.description || ''}
+                  onChange={(e) => setNewMemory({ ...newMemory, description: e.target.value })}
                 />
               </div>
 
@@ -473,7 +407,10 @@ const Dashboard = () => {
             >
               <div className="flex justify-between items-start mb-4">
                 <h3 className="text-lg font-semibold text-white">{memory.title}</h3>
-                <button className="text-gray-400 hover:text-red-400 transition-colors">
+                <button 
+                  onClick={() => handleDeleteMemory(memory.id!)}
+                  className="text-gray-400 hover:text-red-400 transition-colors"
+                >
                   <Trash2 className="h-5 w-5" />
                 </button>
               </div>
@@ -481,7 +418,7 @@ const Dashboard = () => {
               <div className="space-y-4">
                 <div className="flex items-center gap-2 text-sm text-gray-400">
                   <MessageCircleHeart className="h-4 w-4" />
-                  <p className="line-clamp-2">{memory.message}</p>
+                  <p className="line-clamp-2">{memory.description}</p>
                 </div>
 
                 {memory.photos.length > 0 && (
@@ -547,7 +484,7 @@ const Dashboard = () => {
                 <div className="md:w-1/3">
                   <div id="qr-code-preview" className="bg-white p-4 rounded-xl mb-6">
                     <QRCodeSVG
-                      value={`https://love-memory-one.vercel.app/memory/${selectedMemoryForQR.id}`}
+                      value={`${window.location.origin}/memory/${selectedMemoryForQR.id}`}
                       size={200}
                       level="H"
                       className="w-full h-auto"
@@ -583,16 +520,18 @@ const Dashboard = () => {
                       {selectedMemoryForQR.title}
                     </h4>
                     
-                    {selectedMemoryForQR.photos.length > 0 && (
+                    {((selectedMemoryForQR.photos && selectedMemoryForQR.photos.length > 0) || 
+                      (selectedMemoryForQR.photoUrls && selectedMemoryForQR.photoUrls.length > 0)) && (
                       <div className="relative aspect-video mb-6 rounded-lg overflow-hidden">
                         <img
-                          src={URL.createObjectURL(selectedMemoryForQR.photos[currentPhotoIndex])}
+                          src={selectedMemoryForQR.photoUrls?.[currentPhotoIndex] || 
+                               URL.createObjectURL(selectedMemoryForQR.photos[currentPhotoIndex])}
                           alt={`Foto ${currentPhotoIndex + 1}`}
                           className="w-full h-full object-cover"
                         />
-                        {selectedMemoryForQR.photos.length > 1 && (
+                        {((selectedMemoryForQR.photos?.length || 0) + (selectedMemoryForQR.photoUrls?.length || 0) > 1) && (
                           <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-2">
-                            {selectedMemoryForQR.photos.map((_, index) => (
+                            {Array.from({ length: (selectedMemoryForQR.photos?.length || 0) + (selectedMemoryForQR.photoUrls?.length || 0) }).map((_, index) => (
                               <button
                                 key={index}
                                 onClick={() => setCurrentPhotoIndex(index)}
@@ -610,7 +549,7 @@ const Dashboard = () => {
                     
                     <div className="bg-purple-900/30 rounded-xl p-6 mb-6">
                       <p className="text-gray-300 text-lg leading-relaxed whitespace-pre-wrap">
-                        {selectedMemoryForQR.message}
+                        {selectedMemoryForQR.description}
                       </p>
                     </div>
 
@@ -634,13 +573,13 @@ const Dashboard = () => {
                             <h5 className="text-lg font-semibold text-white">
                               {isLoadingMusic ? (
                                 <div className="h-6 w-32 bg-purple-900/50 rounded animate-pulse" />
-                              ) : selectedMemoryForQR.musicData?.name || 'Música não encontrada'}
+                              ) : selectedMemoryForQR.musicData?.name || 'Música adicionada'}
                             </h5>
-                            <p className="text-sm text-gray-400">
-                              {isLoadingMusic ? (
-                                <div className="h-4 w-24 bg-purple-900/50 rounded animate-pulse mt-2" />
-                              ) : selectedMemoryForQR.musicData?.artists.map(artist => artist.name).join(', ') || 'Artista desconhecido'}
-                            </p>
+                            {selectedMemoryForQR.musicData && (
+                              <p className="text-sm text-gray-400">
+                                {selectedMemoryForQR.musicData.artists.join(', ')}
+                              </p>
+                            )}
                           </div>
                           <a
                             href={selectedMemoryForQR.musicUrl}
@@ -656,7 +595,7 @@ const Dashboard = () => {
                         {getSpotifyEmbedUrl(selectedMemoryForQR.musicUrl) && (
                           <div className="rounded-xl overflow-hidden">
                             <iframe
-                              src={getSpotifyEmbedUrl(selectedMemoryForQR.musicUrl) || ''}
+                              src={getSpotifyEmbedUrl(selectedMemoryForQR.musicUrl)}
                               width="100%"
                               height="80"
                               frameBorder="0"
